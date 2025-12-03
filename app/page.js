@@ -27,7 +27,7 @@ export default function AirdropPage() {
         fetchStats();
         // Fix Hydration Error: Set deep link only on client
         if (typeof window !== 'undefined') {
-            setDeepLink(`https://metamask.app.link/dapp/${window.location.host}/airdrop`);
+            setDeepLink(`https://metamask.app.link/dapp/${window.location.host}`);
         }
     }, []);
 
@@ -105,7 +105,7 @@ export default function AirdropPage() {
             if (!window.ethereum) {
                 // If on mobile and no wallet, redirect to deep link
                 if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
-                    window.location.href = deepLink || "https://metamask.app.link/dapp/voixcore.xyz/airdrop";
+                    window.location.href = deepLink || "https://metamask.app.link/dapp/voixcore.xyz";
                     return;
                 }
                 return alert("Please install MetaMask!");
