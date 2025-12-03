@@ -20,15 +20,54 @@ export default function AirdropPage() {
     const [stats, setStats] = useState({ totalClaimed: "0", totalUsers: "0" });
     const [error, setError] = useState("");
     const [manualAddress, setManualAddress] = useState(""); // For manual input
+    const [deepLink, setDeepLink] = useState("");
 
     useEffect(() => {
         checkWallet();
         fetchStats();
+        // Fix Hydration Error: Set deep link only on client
+        if (typeof window !== 'undefined') {
+            setDeepLink(`https://metamask.app.link/dapp/${window.location.host}/airdrop`);
+        }
     }, []);
 
     const checkWallet = async () => {
         if (window.ethereum) {
             try {
+                const chainId = await window.ethereum.request({ method: "eth_chainId" });
+                if (chainId !== "0x11941") { // 72001 in hex
+                    try {
+                        await window.ethereum.request({
+                            method: "wallet_switchEthereumChain",
+                            params: [{ chainId: "0x11941" }],
+                        });
+                    } catch (switchError) {
+                        // This error code indicates that the chain has not been added to MetaMask.
+                        if (switchError.code === 4902) {
+                            try {
+                                await window.ethereum.request({
+                                    method: "wallet_addEthereumChain",
+                                    params: [
+                                        {
+                                            chainId: "0x11941",
+                                            chainName: "VoixCore Mainnet",
+                                            nativeCurrency: {
+                                                name: "VoixCore",
+                                                symbol: "VOIXN",
+                                                decimals: 18,
+                                            },
+                                            rpcUrls: ["https://explorer.voixcore.xyz/api/rpc"],
+                                            blockExplorerUrls: ["https://explorer.voixcore.xyz"],
+                                        },
+                                    ],
+                                });
+                            } catch (addError) {
+                                console.error("Failed to add network", addError);
+                            }
+                        }
+                    }
+                }
+
                 const accounts = await window.ethereum.request({ method: "eth_accounts" });
                 if (accounts.length > 0) {
                     setAccount(accounts[0]);
@@ -57,6 +96,7 @@ export default function AirdropPage() {
             });
         } catch (err) {
             console.error("Error fetching stats:", err);
+            // Fallback or silent fail
         }
     };
 
@@ -65,12 +105,15 @@ export default function AirdropPage() {
             if (!window.ethereum) {
                 // If on mobile and no wallet, redirect to deep link
                 if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
-                    const deepLink = `https://metamask.app.link/dapp/${window.location.host}`;
-                    window.location.href = deepLink;
+                    window.location.href = deepLink || "https://metamask.app.link/dapp/voixcore.xyz/airdrop";
                     return;
                 }
                 return alert("Please install MetaMask!");
             }
+
+            // Ensure correct network before connecting
+            await checkWallet();
+
             const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
             setAccount(accounts[0]);
             checkEligibility(accounts[0]);
@@ -110,7 +153,7 @@ export default function AirdropPage() {
 
         } catch (err) {
             console.error(err);
-            setError("Failed to check eligibility.");
+            setError("Failed to check eligibility. Ensure you are on VoixCore Network.");
         } finally {
             setChecking(false);
         }
@@ -123,7 +166,6 @@ export default function AirdropPage() {
 
     const claimAirdrop = async () => {
         if (!account) {
-            // If user checked manually but hasn't connected, prompt connection
             connectWallet();
             return;
         }
@@ -136,7 +178,8 @@ export default function AirdropPage() {
             const signer = await provider.getSigner();
             const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
 
-            const tx = await contract.claim();
+            // Explicitly set gas limit to avoid estimation errors if RPC is flaky
+            const tx = await contract.claim({ gasLimit: 200000 });
             await tx.wait();
 
             setClaimed(true);
@@ -145,7 +188,12 @@ export default function AirdropPage() {
             fetchStats(); // Refresh stats
         } catch (err) {
             console.error(err);
-            setError(err.reason || "Transaction failed. Please try again.");
+            // Better error message handling
+            if (err.code === 'CALL_EXCEPTION') {
+                setError("Transaction failed. Possible reasons: Already claimed, insufficient gas, or network issue.");
+            } else {
+                setError(err.reason || err.message || "Transaction failed. Please try again.");
+            }
         } finally {
             setLoading(false);
         }
@@ -260,7 +308,7 @@ export default function AirdropPage() {
                             {/* Deep Link Button for Mobile */}
                             <div className="mt-4 md:hidden">
                                 <a
-                                    href={`https://metamask.app.link/dapp/${typeof window !== 'undefined' ? window.location.host : 'voixcore.xyz'}/airdrop`}
+                                    href={deepLink}
                                     className="block w-full py-3 bg-secondary hover:bg-secondary/80 text-foreground text-sm font-medium rounded-xl text-center transition-colors border border-border"
                                 >
                                     Open in MetaMask App 🦊
