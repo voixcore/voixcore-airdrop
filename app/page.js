@@ -4,11 +4,12 @@ import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import { ethers, formatEther } from "ethers";
 import confetti from "canvas-confetti";
-import { Wallet, Gift, CheckCircle, AlertCircle, Loader2, ArrowRight } from "lucide-react";
+import { Wallet, Gift, CheckCircle, AlertCircle, Loader2, ArrowRight, Search, ExternalLink } from "lucide-react";
 import contractData from "./contract.json";
 
 const CONTRACT_ADDRESS = contractData.address;
 const CONTRACT_ABI = contractData.abi;
+const VOIXN_PRICE = 0.057; // Fixed price for display
 
 export default function AirdropPage() {
     const [account, setAccount] = useState(null);
@@ -18,6 +19,7 @@ export default function AirdropPage() {
     const [claimed, setClaimed] = useState(false);
     const [stats, setStats] = useState({ totalClaimed: "0", totalUsers: "0" });
     const [error, setError] = useState("");
+    const [manualAddress, setManualAddress] = useState(""); // For manual input
 
     useEffect(() => {
         checkWallet();
@@ -26,10 +28,14 @@ export default function AirdropPage() {
 
     const checkWallet = async () => {
         if (window.ethereum) {
-            const accounts = await window.ethereum.request({ method: "eth_accounts" });
-            if (accounts.length > 0) {
-                setAccount(accounts[0]);
-                checkEligibility(accounts[0]);
+            try {
+                const accounts = await window.ethereum.request({ method: "eth_accounts" });
+                if (accounts.length > 0) {
+                    setAccount(accounts[0]);
+                    checkEligibility(accounts[0]);
+                }
+            } catch (e) {
+                console.error("Wallet check failed", e);
             }
         }
     };
@@ -56,7 +62,15 @@ export default function AirdropPage() {
 
     const connectWallet = async () => {
         try {
-            if (!window.ethereum) return alert("Please install MetaMask!");
+            if (!window.ethereum) {
+                // If on mobile and no wallet, redirect to deep link
+                if (/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)) {
+                    const deepLink = `https://metamask.app.link/dapp/${window.location.host}`;
+                    window.location.href = deepLink;
+                    return;
+                }
+                return alert("Please install MetaMask!");
+            }
             const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
             setAccount(accounts[0]);
             checkEligibility(accounts[0]);
@@ -66,15 +80,34 @@ export default function AirdropPage() {
     };
 
     const checkEligibility = async (userAddress) => {
+        if (!ethers.isAddress(userAddress)) {
+            setError("Invalid address format.");
+            return;
+        }
+
         setChecking(true);
         setError("");
         try {
-            const provider = new ethers.BrowserProvider(window.ethereum);
+            // Use read-only provider if window.ethereum is not available (manual check)
+            let provider;
+            if (window.ethereum) {
+                provider = new ethers.BrowserProvider(window.ethereum);
+            } else {
+                provider = new ethers.JsonRpcProvider("https://explorer.voixcore.xyz/api/rpc");
+            }
+
             const contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, provider);
             const hasClaimed = await contract.hasClaimed(userAddress);
 
             setClaimed(hasClaimed);
             setEligible(!hasClaimed);
+
+            // If manual check passed, set account to display result
+            if (!account) {
+                // Just show eligibility status, don't set 'account' as connected wallet
+                // But for UI simplicity, we might want to show the address checked
+            }
+
         } catch (err) {
             console.error(err);
             setError("Failed to check eligibility.");
@@ -83,8 +116,18 @@ export default function AirdropPage() {
         }
     };
 
+    const handleManualCheck = () => {
+        if (!manualAddress) return;
+        checkEligibility(manualAddress);
+    };
+
     const claimAirdrop = async () => {
-        if (!account) return;
+        if (!account) {
+            // If user checked manually but hasn't connected, prompt connection
+            connectWallet();
+            return;
+        }
+
         setLoading(true);
         setError("");
 
@@ -112,21 +155,21 @@ export default function AirdropPage() {
         const duration = 3 * 1000;
         const animationEnd = Date.now() + duration;
         const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 0 };
-
         const randomInRange = (min, max) => Math.random() * (max - min) + min;
 
         const interval = setInterval(function () {
             const timeLeft = animationEnd - Date.now();
-
             if (timeLeft <= 0) {
                 return clearInterval(interval);
             }
-
             const particleCount = 50 * (timeLeft / duration);
             confetti({ ...defaults, particleCount, origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 } });
             confetti({ ...defaults, particleCount, origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 } });
         }, 250);
     };
+
+    // Calculate USD Value
+    const totalClaimedValue = parseFloat(stats.totalClaimed) * VOIXN_PRICE;
 
     return (
         <div className="min-h-screen bg-background text-foreground flex flex-col items-center justify-center p-4 relative overflow-hidden">
@@ -146,9 +189,10 @@ export default function AirdropPage() {
                     <h1 className="text-4xl md:text-5xl font-bold mb-4 bg-clip-text text-transparent bg-gradient-to-r from-primary to-accent">
                         VoixCore Airdrop
                     </h1>
-                    <p className="text-muted-foreground text-lg">
-                        Claim your free <span className="text-primary font-bold">100 VOIXN</span> and join the sovereign revolution.
+                    <p className="text-muted-foreground text-lg mb-2">
+                        Claim your free <span className="text-primary font-bold">1,500 VOIXN</span> and join the sovereign revolution.
                     </p>
+                    <p className="text-sm text-muted-foreground">free gas VOIXN</p>
                 </div>
 
                 {/* Stats Card */}
@@ -156,6 +200,10 @@ export default function AirdropPage() {
                     <div className="bg-card border border-border p-4 rounded-xl text-center">
                         <div className="text-sm text-muted-foreground mb-1">Total Claimed</div>
                         <div className="text-xl font-bold text-primary">{parseFloat(stats.totalClaimed).toLocaleString()} VOIXN</div>
+                        <div className="text-xs text-muted-foreground mt-1">
+                            ${totalClaimedValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            <span className="opacity-50 ml-1">(@ ${VOIXN_PRICE})</span>
+                        </div>
                     </div>
                     <div className="bg-card border border-border p-4 rounded-xl text-center">
                         <div className="text-sm text-muted-foreground mb-1">Participants</div>
@@ -168,18 +216,56 @@ export default function AirdropPage() {
                     {/* Decorative Border */}
                     <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-primary via-accent to-primary" />
 
-                    {!account ? (
-                        <div className="text-center py-8">
+                    {!account && !eligible && !claimed ? (
+                        <div className="text-center py-6">
                             <Wallet className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
                             <h3 className="text-xl font-bold mb-2">Connect Wallet</h3>
                             <p className="text-muted-foreground mb-6">Connect your MetaMask wallet to check eligibility.</p>
+
                             <button
                                 onClick={connectWallet}
-                                className="w-full py-4 bg-primary hover:bg-primary/90 text-primary-foreground font-bold rounded-xl transition-all flex items-center justify-center gap-2"
+                                className="w-full py-4 bg-primary hover:bg-primary/90 text-primary-foreground font-bold rounded-xl transition-all flex items-center justify-center gap-2 mb-4"
                             >
                                 <Wallet className="w-5 h-5" />
                                 Connect Wallet
                             </button>
+
+                            {/* Manual Input Section */}
+                            <div className="relative">
+                                <div className="absolute inset-0 flex items-center">
+                                    <span className="w-full border-t border-border" />
+                                </div>
+                                <div className="relative flex justify-center text-xs uppercase">
+                                    <span className="bg-card px-2 text-muted-foreground">Or check manually</span>
+                                </div>
+                            </div>
+
+                            <div className="mt-4 flex gap-2">
+                                <input
+                                    type="text"
+                                    placeholder="Paste wallet address..."
+                                    value={manualAddress}
+                                    onChange={(e) => setManualAddress(e.target.value)}
+                                    className="flex-1 bg-secondary border border-border rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                                />
+                                <button
+                                    onClick={handleManualCheck}
+                                    disabled={checking || !manualAddress}
+                                    className="bg-secondary hover:bg-secondary/80 border border-border rounded-lg px-4 py-2 transition-colors disabled:opacity-50"
+                                >
+                                    {checking ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                                </button>
+                            </div>
+
+                            {/* Deep Link Button for Mobile */}
+                            <div className="mt-4 md:hidden">
+                                <a
+                                    href={`https://metamask.app.link/dapp/${typeof window !== 'undefined' ? window.location.host : 'voixcore.xyz'}/airdrop`}
+                                    className="block w-full py-3 bg-secondary hover:bg-secondary/80 text-foreground text-sm font-medium rounded-xl text-center transition-colors border border-border"
+                                >
+                                    Open in MetaMask App 🦊
+                                </a>
+                            </div>
                         </div>
                     ) : checking ? (
                         <div className="text-center py-12">
@@ -193,14 +279,14 @@ export default function AirdropPage() {
                             </div>
                             <h3 className="text-2xl font-bold mb-2 text-green-500">Already Claimed!</h3>
                             <p className="text-muted-foreground mb-6">
-                                You have successfully claimed your 100 VOIXN.
+                                You have successfully claimed your 1,500 VOIXN.
                             </p>
                             <div className="p-4 bg-secondary/50 rounded-xl border border-border mb-6">
                                 <div className="text-sm text-muted-foreground mb-1">Your Wallet</div>
-                                <div className="font-mono text-xs md:text-sm truncate">{account}</div>
+                                <div className="font-mono text-xs md:text-sm truncate">{account || manualAddress}</div>
                             </div>
                             <a
-                                href={`https://explorer.voixcore.xyz/address/${account}`}
+                                href={`https://explorer.voixcore.xyz/address/${account || manualAddress}`}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 className="text-primary hover:underline flex items-center justify-center gap-1"
@@ -215,7 +301,7 @@ export default function AirdropPage() {
                             </div>
                             <h3 className="text-2xl font-bold mb-2">You are Eligible!</h3>
                             <p className="text-muted-foreground mb-6">
-                                You can claim <span className="text-foreground font-bold">100 VOIXN</span> right now.
+                                You can claim <span className="text-foreground font-bold">1,500 VOIXN</span> right now.
                             </p>
 
                             {error && (
@@ -238,10 +324,16 @@ export default function AirdropPage() {
                                 ) : (
                                     <>
                                         <Gift className="w-5 h-5" />
-                                        Claim 100 VOIXN
+                                        Claim 1,500 VOIXN
                                     </>
                                 )}
                             </button>
+
+                            {!account && (
+                                <p className="text-xs text-muted-foreground mt-4">
+                                    *Please connect wallet to claim.
+                                </p>
+                            )}
                         </div>
                     ) : (
                         <div className="text-center py-8">
@@ -250,6 +342,12 @@ export default function AirdropPage() {
                             <p className="text-muted-foreground">
                                 Sorry, this address is not eligible for the airdrop.
                             </p>
+                            <button
+                                onClick={() => { setEligible(false); setClaimed(false); setAccount(null); setManualAddress(""); }}
+                                className="mt-4 text-primary hover:underline text-sm"
+                            >
+                                Check another address
+                            </button>
                         </div>
                     )}
                 </div>
